@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>방명록</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<style>
+  :root {
+    --bg: #f6f4ef; --card: #ffffff; --text: #1f1d1a; --muted: #6f6a61;
+    --line: #e4dfd5; --accent: #2f6f5e; --accent-text: #ffffff; --err: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --card: #1f1e1b; --text: #ece8e1; --muted: #a29c91;
+      --line: #34312c; --accent: #6fbfa6; --accent-text: #10201b; --err: #f2b8b5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Noto Sans KR", system-ui, sans-serif; line-height: 1.6;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 48px 16px 80px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 28px; font-size: 15px; }
+  form {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px; display: grid; gap: 10px; margin-bottom: 28px;
+  }
+  input, textarea {
+    width: 100%; font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; outline: none;
+  }
+  input:focus, textarea:focus { border-color: var(--accent); }
+  textarea { min-height: 96px; resize: vertical; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .count { color: var(--muted); font-size: 13px; }
+  button {
+    font: inherit; font-weight: 500; border: 0; border-radius: 10px; cursor: pointer;
+    padding: 10px 18px; background: var(--accent); color: var(--accent-text);
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  .status { font-size: 14px; color: var(--muted); min-height: 1.4em; margin: -14px 0 14px; }
+  .status.err { color: var(--err); }
+  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  li {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px;
+  }
+  .meta { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; margin-bottom: 4px; }
+  .name { font-weight: 700; }
+  .time { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .msg { white-space: pre-wrap; word-break: break-word; margin: 0; }
+  .empty { color: var(--muted); text-align: center; padding: 24px 0; }
+  li.new { animation: pop .5s ease; }
+  @keyframes pop { from { transform: translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>방명록</h1>
+  <p class="sub">한마디 남겨주세요. 남긴 글은 모두에게 보입니다.</p>
+
+  <form id="form">
+    <input id="name" maxlength="30" placeholder="이름" required>
+    <textarea id="message" maxlength="500" placeholder="메시지" required></textarea>
+    <div class="row">
+      <span class="count" id="count">0 / 500</span>
+      <button id="submit" type="submit">남기기</button>
+    </div>
+  </form>
+
+  <p class="status" id="status"></p>
+  <ul id="list"><li class="empty">불러오는 중…</li></ul>
+</main>
+
+<script>
+  // 키는 config.js 에서 불러옵니다
+  const { url, publishableKey } = window.SUPABASE_CONFIG;
+  const db = supabase.createClient(url, publishableKey);
+
+  const $ = (id) => document.getElementById(id);
+  const list = $("list"), statusEl = $("status");
+  const shown = new Set();
+
+  function setStatus(text, isErr = false) {
+    statusEl.textContent = text;
+    statusEl.classList.toggle("err", isErr);
+  }
+
+  function fmt(ts) {
+    return new Date(ts).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" });
+  }
+
+  function render(row, { prepend = false, animate = false } = {}) {
+    if (shown.has(row.id)) return;
+    shown.add(row.id);
+    list.querySelector(".empty")?.remove();
+    const li = document.createElement("li");
+    if (animate) li.className = "new";
+    const meta = document.createElement("div"); meta.className = "meta";
+    const n = document.createElement("span"); n.className = "name"; n.textContent = row.name;
+    const t = document.createElement("span"); t.className = "time"; t.textContent = fmt(row.created_at);
+    const m = document.createElement("p"); m.className = "msg"; m.textContent = row.message;
+    meta.append(n, t); li.append(meta, m);
+    prepend ? list.prepend(li) : list.append(li);
+  }
+
+  async function load() {
+    const { data, error } = await db
+      .from("guestbook")
+      .select("id, name, message, created_at")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    list.innerHTML = "";
+    if (error) {
+      list.innerHTML = '<li class="empty">글을 불러오지 못했어요.</li>';
+      setStatus("오류: " + error.message + " (supabase_setup.sql을 실행했는지 확인하세요)", true);
+      return;
+    }
+    if (!data.length) list.innerHTML = '<li class="empty">아직 글이 없어요. 첫 글을 남겨보세요!</li>';
+    data.forEach((r) => render(r));
+  }
+
+  $("message").addEventListener("input", (e) => {
+    $("count").textContent = e.target.value.length + " / 500";
+  });
+
+  $("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = $("name").value.trim();
+    const message = $("message").value.trim();
+    if (!name || !message) return setStatus("이름과 메시지를 모두 입력해주세요.", true);
+
+    $("submit").disabled = true;
+    setStatus("저장 중…");
+    const { data, error } = await db
+      .from("guestbook")
+      .insert({ name, message })
+      .select()
+      .single();
+    $("submit").disabled = false;
+
+    if (error) return setStatus("저장 실패: " + error.message, true);
+    render(data, { prepend: true, animate: true });
+    $("message").value = "";
+    $("count").textContent = "0 / 500";
+    setStatus("남겼어요!");
+    setTimeout(() => setStatus(""), 2000);
+  });
+
+  // 다른 사람이 쓴 글 실시간 반영
+  db.channel("guestbook")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "guestbook" },
+        (payload) => render(payload.new, { prepend: true, animate: true }))
+    .subscribe();
+
+  load();
+</script>
+</body>
+</html>
